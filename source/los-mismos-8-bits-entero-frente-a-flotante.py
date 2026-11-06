@@ -1,0 +1,229 @@
+""""Los mismos 8 bits: entero frente a flotante"
+
+Diagrama propuesto por el estudio de diagramas a partir de la recomendación
+«Los mismos ocho bits: entero frente a flotante»: dos maneras de repartir un
+mismo byte. El entero dedica 1 bit al signo y 7 al valor y reparte el rango en
+pasos iguales; el flotante reserva 1 bit al signo, 4 al exponente y 3 a la
+mantisa, y sus pasos crecen con el exponente.
+
+Autocontenido: solo Pillow. `python3 source.py` escribe out.png y
+`DIAGRAM_OUT=versions/v1.png python3 source.py` escribe donde diga el estudio.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont
+
+# ---------------------------------------------------------------------------
+# 1. Paleta y tipografía (tema oscuro de PyramidSpace)
+# ---------------------------------------------------------------------------
+BG = "#090B0D"
+CARD = "#111519"
+HAIR = "#1F2123"
+AXIS = "#3F4142"
+TEXT = "#F8FAFC"
+MUTED = "#94A3B8"
+AMBER = "#F59E0B"
+TEAL = "#2DD4BF"
+TEAL_LIGHT = "#5EEAD4"
+
+CELL_TEXT_AMBER = "#2A1A00"
+CELL_TEXT_TEAL = "#06201C"
+
+W, H = 1800, 1200
+MARGIN = 90
+
+FONT_DIR = Path("/usr/share/fonts/truetype")
+LIBERATION = FONT_DIR / "liberation"
+DEJAVU = FONT_DIR / "dejavu"
+
+
+# ---------------------------------------------------------------------------
+# 2. Utilidades
+# ---------------------------------------------------------------------------
+def rgb(value: str) -> tuple[int, int, int]:
+    """Convierte `#RRGGBB` en una tupla RGB."""
+    value = value.lstrip("#")
+    return tuple(int(value[i : i + 2], 16) for i in (0, 2, 4))
+
+
+def mix(c1: str, c2: str, t: float) -> tuple[int, int, int]:
+    """Interpola dos colores hex; `t` es el peso de `c2` (0..1)."""
+    t = max(0.0, min(1.0, t))
+    a, b = rgb(c1), rgb(c2)
+    return tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
+
+
+def font(size: int, bold: bool = False, mono: bool = False) -> ImageFont.FreeTypeFont:
+    """Liberation Sans para rótulos y DejaVu Sans Mono para los bits."""
+    if mono:
+        path = DEJAVU / ("DejaVuSansMono-Bold.ttf" if bold else "DejaVuSansMono.ttf")
+    else:
+        path = LIBERATION / ("LiberationSans-Bold.ttf" if bold else "LiberationSans-Regular.ttf")
+    try:
+        return ImageFont.truetype(str(path), size)
+    except OSError:
+        fallback = DEJAVU / ("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf")
+        try:
+            return ImageFont.truetype(str(fallback), size)
+        except OSError:
+            return ImageFont.load_default()
+
+
+def new_canvas() -> tuple[Image.Image, ImageDraw.ImageDraw]:
+    """Lienzo oscuro sin marco (el CSS del blog pone las esquinas)."""
+    image = Image.new("RGB", (W, H), rgb(BG))
+    return image, ImageDraw.Draw(image)
+
+
+def rich_text(draw: ImageDraw.ImageDraw, x: int, cy: int,
+              parts: list[tuple[str, str, bool]], size: int) -> None:
+    """Texto en tramos con color y peso propios, alineado a la izquierda."""
+    cursor = x
+    for text, color, bold in parts:
+        face = font(size, bold=bold)
+        draw.text((cursor, cy), text, font=face, fill=rgb(color), anchor="lm")
+        cursor += draw.textlength(text, font=face)
+
+
+def rich_center(draw: ImageDraw.ImageDraw, cx: float, cy: int,
+                parts: list[tuple[str, str, bool]], size: int) -> None:
+    """Como `rich_text`, pero centrado en `cx`."""
+    total = sum(draw.textlength(text, font=font(size, bold=bold)) for text, _, bold in parts)
+    rich_text(draw, round(cx - total / 2), cy, parts, size)
+
+
+# ---------------------------------------------------------------------------
+# 3. Piezas del diagrama
+# ---------------------------------------------------------------------------
+CELL, GAP, NBITS = 96, 6, 8
+CARD_X, CARD_W, CARD_H = MARGIN, 1620, 340
+CARD_YS = (260, 650)
+STRIP_X = CARD_X + 34
+STRIP_W = NBITS * CELL + (NBITS - 1) * GAP      # 810
+STRIP_CX = STRIP_X + STRIP_W / 2                # 529
+
+TITLE_Y, SUB_Y = 118, 194
+CLOSING_CY = 1070
+
+ROWS = (
+    {   # INT8: 1 bit de signo + 7 de valor
+        "label": "INT8",
+        "fields": (
+            {"name": "signo", "count": 1, "color": AMBER, "text": CELL_TEXT_AMBER},
+            {"name": "valor (7 bits)", "count": 7, "color": TEAL, "text": CELL_TEXT_TEAL},
+        ),
+        "grid_color": TEAL,
+        "positions": [STRIP_W * i / 5 for i in range(6)],
+        "phrase": (("256 códigos", TEXT, True), (" iguales", MUTED, False)),
+        "caption": ("el entero gasta el byte entero", "en el valor"),
+        "caption_color": TEAL,
+    },
+    {   # FP8 E4M3: 1 de signo, 4 de exponente y 3 de mantisa
+        "label": "FP8 E4M3",
+        "fields": (
+            {"name": "signo", "count": 1, "color": AMBER, "text": CELL_TEXT_AMBER},
+            {"name": "exponente (4 bits)", "count": 4, "color": TEAL_LIGHT, "text": CELL_TEXT_TEAL},
+            {"name": "mantisa (3 bits)", "count": 3, "color": TEAL, "text": CELL_TEXT_TEAL},
+        ),
+        "grid_color": TEAL_LIGHT,
+        "positions": [0, 26, 78, 182, 390, 802],
+        "phrase": (("pasos que crecen", TEXT, False), (" con el exponente", MUTED, False)),
+        "caption": ("el flotante reserva bits", "para la escala"),
+        "caption_color": TEAL_LIGHT,
+    },
+)
+
+
+def draw_strip(draw: ImageDraw.ImageDraw, row: dict, y: int) -> None:
+    """Ocho cajitas de bit y, encima, el nombre de cada campo con su color."""
+    x = STRIP_X
+    bit = NBITS - 1
+    for field in row["fields"]:
+        group_w = field["count"] * CELL + (field["count"] - 1) * GAP
+        for index in range(field["count"]):
+            cell_x = x + index * (CELL + GAP)
+            draw.rounded_rectangle((cell_x, y, cell_x + CELL, y + CELL), radius=14,
+                                   fill=rgb(field["color"]))
+            draw.text((cell_x + CELL / 2, y + CELL / 2), str(bit),
+                      font=font(24, bold=True, mono=True), fill=rgb(field["text"]), anchor="mm")
+            bit -= 1
+        draw.text((x + group_w / 2, y - 26), field["name"],
+                  font=font(26), fill=rgb(field["color"]), anchor="mm")
+        x += group_w + GAP
+
+
+def draw_ruler(draw: ImageDraw.ImageDraw, row: dict, y: int) -> None:
+    """Llave bajo la tira con las marcas de ejemplo: iguales o cada vez más separadas."""
+    draw.line((STRIP_X, y, STRIP_X + STRIP_W, y), fill=rgb(AXIS), width=3)
+    for position in row["positions"]:
+        x = STRIP_X + position
+        draw.ellipse((x - 8, y - 8, x + 8, y + 8), fill=rgb(row["grid_color"]))
+    for x in (STRIP_X, STRIP_X + STRIP_W):
+        draw.line((x, y, x, y + 9), fill=rgb(AXIS), width=2)
+
+
+def pill(draw: ImageDraw.ImageDraw, right: int, cy: int, text: str, color: str,
+         base: str = BG, size: int = 30) -> None:
+    """Etiqueta compacta alineada a la derecha."""
+    face = font(size, bold=True)
+    width = int(draw.textlength(text, font=face) + 44)
+    height = size + 26
+    left = right - width
+    draw.rounded_rectangle((left, cy - height / 2, right, cy + height / 2), radius=height / 2,
+                           fill=mix(color, base, 0.86), outline=mix(color, base, 0.52), width=2)
+    draw.text((left + width / 2, cy), text, font=face, fill=rgb(color), anchor="mm")
+
+
+# ---------------------------------------------------------------------------
+# 4. Composición
+# ---------------------------------------------------------------------------
+def draw() -> Image.Image:
+    """Compón el diagrama y devuelve la imagen final."""
+    image, canvas = new_canvas()
+
+    canvas.text((MARGIN, TITLE_Y), "Los mismos 8 bits: entero frente a flotante",
+                font=font(62, bold=True), fill=rgb(TEXT), anchor="lm")
+    canvas.text((MARGIN, SUB_Y), "Dos maneras de repartir un byte",
+                font=font(30), fill=rgb(MUTED), anchor="lm")
+
+    for row, card_y in zip(ROWS, CARD_YS):
+        canvas.rounded_rectangle((CARD_X, card_y, CARD_X + CARD_W, card_y + CARD_H),
+                                 radius=24, fill=rgb(CARD), outline=rgb(HAIR), width=2)
+
+        canvas.text((CARD_X + 34, card_y + 52), row["label"],
+                    font=font(44, bold=True), fill=rgb(TEXT), anchor="lm")
+
+        draw_strip(canvas, row, card_y + 128)
+        draw_ruler(canvas, row, card_y + 270)
+
+        rich_center(canvas, STRIP_CX, card_y + 304, list(row["phrase"]), size=28)
+
+        # Frase de cada filosofía, a la derecha y centrada en la tira
+        strip_center = card_y + 128 + CELL / 2
+        caption_x = CARD_X + 910
+        canvas.rounded_rectangle((caption_x, strip_center - 48, caption_x + 4, strip_center + 48),
+                                 radius=2, fill=rgb(row["caption_color"]))
+        for line_index, line in enumerate(row["caption"]):
+            canvas.text((caption_x + 28, strip_center - 24 + line_index * 48), line,
+                        font=font(40), fill=rgb(MUTED), anchor="lm")
+
+    pill(canvas, W - MARGIN, CLOSING_CY, "mismo byte, dos filosofías", TEAL)
+
+    return image
+
+
+def save(image: Image.Image, path: str | Path | None = None) -> Path:
+    """Guarda el PNG en `DIAGRAM_OUT` (o en out.png si se ejecuta a mano)."""
+    target = Path(path or os.environ.get("DIAGRAM_OUT", "out.png"))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    image.save(target, format="PNG")
+    return target
+
+
+if __name__ == "__main__":
+    destination = save(draw())
+    print(f"diagrama escrito en {destination}")
